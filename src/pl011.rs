@@ -1,7 +1,3 @@
-//! Types and definitions for PL011 UART.
-//!
-//! The official documentation: <https://developer.arm.com/documentation/ddi0183/latest>
-
 use core::ptr::NonNull;
 
 use tock_registers::{

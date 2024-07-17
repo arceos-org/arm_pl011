@@ -1,8 +1,8 @@
-//! Definitions for PL011 UART.
-
 #![no_std]
-#![feature(const_ptr_as_ref)]
 #![feature(const_option)]
 #![feature(const_nonnull_new)]
+#![doc = include_str!("../README.md")]
 
-pub mod pl011;
+mod pl011;
+
+pub use pl011::Pl011Uart;

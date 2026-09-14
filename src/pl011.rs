@@ -75,10 +75,30 @@ impl Pl011Uart {
         self.regs().cr.set((1 << 0) | (1 << 8) | (1 << 9)); // tx enable, rx enable, uart enable
     }
 
-    /// Output a char c to data register
+    /// Output a char c to data register, waiting until the TX FIFO has space.
     pub fn putchar(&mut self, c: u8) {
-        while self.regs().fr.get() & (1 << 5) != 0 {}
-        self.regs().dr.set(c as u32);
+        while !self.try_putchar(c) {}
+    }
+
+    /// Return `true` if the TX FIFO is full (`FR` bit `TXFF` is set), i.e.
+    /// [`Self::putchar`] would block.
+    pub fn tx_fifo_full(&self) -> bool {
+        self.regs().fr.get() & (1 << 5) != 0
+    }
+
+    /// Output a char c to data register without blocking.
+    ///
+    /// Return `true` if the TX FIFO had space and `c` was written, or `false`
+    /// if the TX FIFO was full and nothing was sent (the caller may retry
+    /// later). Useful in contexts where blocking indefinitely is unacceptable,
+    /// such as interrupt handlers or emergency console output.
+    pub fn try_putchar(&mut self, c: u8) -> bool {
+        if self.tx_fifo_full() {
+            false
+        } else {
+            self.regs().dr.set(c as u32);
+            true
+        }
     }
 
     /// Return a byte if pl011 has received, or it will return `None`.
@@ -99,5 +119,57 @@ impl Pl011Uart {
     /// Clear all interrupts
     pub fn ack_interrupts(&mut self) {
         self.regs().icr.set(0x7ff);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Size of the register block in 32-bit words: `@END` is at offset 0x48.
+    const REGS_WORDS: usize = 0x48 / size_of::<u32>();
+
+    /// FR (Flag Register) word index, at offset 0x18.
+    const FR_WORD: usize = 0x18 / size_of::<u32>();
+    /// DR (Data Register) word index, at offset 0x00.
+    const DR_WORD: usize = 0x00 / size_of::<u32>();
+    const FR_TXFF: u32 = 1 << 5;
+
+    fn uart_at(regs: &mut [u32; REGS_WORDS]) -> Pl011Uart {
+        Pl011Uart::new(regs.as_mut_ptr() as *mut u8)
+    }
+
+    #[test]
+    fn tx_fifo_full_follows_fr_txff() {
+        let mut regs = [0u32; REGS_WORDS];
+        let uart = uart_at(&mut regs);
+        assert!(!uart.tx_fifo_full());
+        regs[FR_WORD] = FR_TXFF;
+        assert!(uart.tx_fifo_full());
+    }
+
+    #[test]
+    fn try_putchar_writes_when_fifo_has_space() {
+        let mut regs = [0u32; REGS_WORDS];
+        let mut uart = uart_at(&mut regs);
+        assert!(uart.try_putchar(b'A'));
+        assert_eq!(regs[DR_WORD], u32::from(b'A'));
+    }
+
+    #[test]
+    fn try_putchar_fails_without_writing_when_fifo_full() {
+        let mut regs = [0u32; REGS_WORDS];
+        regs[FR_WORD] = FR_TXFF;
+        let mut uart = uart_at(&mut regs);
+        assert!(!uart.try_putchar(b'A'));
+        assert_eq!(regs[DR_WORD], 0);
+    }
+
+    #[test]
+    fn putchar_writes_when_fifo_has_space() {
+        let mut regs = [0u32; REGS_WORDS];
+        let mut uart = uart_at(&mut regs);
+        uart.putchar(b'A');
+        assert_eq!(regs[DR_WORD], u32::from(b'A'));
     }
 }
